@@ -1,0 +1,114 @@
+#How to get the adjacency matrix necessary for the chord diagram: 
+
+import pandas as pd
+import numpy as np
+
+data = pd.read_csv("NameOfFile.csv",encoding='latin1',skiprows=1)
+
+df = pd.DataFrame(data)
+
+#drop thumbs files and temp files
+
+df['Drop'] = (df['FullName'].str.contains("thumbs.db",case=False) | df['FullName'].str.contains("~",case=False))
+
+df.drop(df[df['Drop'] == True ].index , inplace=True)
+
+df = df.drop('Drop', 1)
+
+#Get the Extension.  put in in lowercase so it will merge properly
+
+df['Type'] = df.FullName.str.rsplit('.', 1).str[-1].str.lower()
+
+
+#Assign a broad category to the extension (spreadsheets, text, photo etc),  Create a dataframe assigning each type to a broad type. 
+data = {
+'Type': ["lnk","db","xlsx","docx","doc","jpg","xls","msg","pdf","tif","pub","wav","xml","mov","md5","mp4","avi","wma","png","txt","jpeg","rtf","bmp","ppt","mp3","htm","ldb","mdb","gif","accdb","html","mso","wmz","pcz","rec","tiff","zip","thmx","psd","plist","m4a","aux","rrd","tfw","jbf","pptx","ps","as","ini","wmv","job","jrq","cfg","BUP","IFO","VOB","vsd","shs","csv","cdf","psb","flv","mpp","mpg","ppsx","m4v","ico","css","asf","web","php","aspx","json","eps","mht","sh3d"],
+'Category': ["image","database","spreadsheet","text","text","image","spreadsheet","email","text","image","multimedia","sound","web","video","systems","sound","sound","sound","image","text","image","text","image","powerpoint","sound","web","database","database","image","database","web","web","systems","image","video","image","tech","systems","multimedia","systems","audio","systems","image","image","image","powerpoint","image","systems","systems","video","systems","systems","systems","video","video","video","multimedia","systems","spreadsheet","multimedia","image","video","systems","video","powerpoint","video","image","web","video","web","web","web","web","image","web","application"]
+}
+
+extension_df = pd.DataFrame(data)
+#Merge the two dataframes so you know the type of each text. 
+df = pd.merge(df,extension_df,on=['Type'],how='left')
+
+#Add the hash by merging with the hash dataset.  Start by making sure that both datasets have the same name for fullpath/filepath
+
+
+#For the creation of separate datasets: isolate the top-level folder name - "top-level" may need be different for every dept.  Identify the folder you want on the top level, then count how many backslashes precede that folder (usu. four).  
+
+df['ShortNames'] = df['FullName'].str.split(r'\\').str[4] + "-" + df['FullName'].str.split(r'\\').str[5]
+
+
+
+#delete if it is a file (ie there is a dot less than 4 positions from end).  Removing them means that a lot of files sitting on the sub-subsolder level will be gone, resulting in a cleaner final page
+
+
+df['ShortNames'].fillna(value="None",inplace=True)
+
+#
+df["isFile"] = (df['ShortNames'].apply(lambda x: (len(x) - str(x).rfind("."))<6))
+
+df.drop(df[df['isFile'] == True ].index , inplace=True)
+#
+df = df.drop('isFile', 1)
+#
+ShortNamesList = sorted(set(df['ShortNames']))
+print(ShortNamesList)
+
+#Get rid of the same stuff at the beginning of each FullName for readability
+#Depending on dataset, it might be: '\\\Fileserver\\Communities\\Staff\\vp academic\\private\\'
+
+df['Doc'] = df['FullName'].apply(lambda x: str(x).replace('O:\\Staff\\College of Interdisciplinary Studies\\Private\\','',1))
+
+#Get rid of any trailing backslashes (otherwise, the subfolder-folder link will not match)
+df['Doc'] = df['Doc'].apply(lambda x: str(x).rstrip('\\'))
+
+#Make the parent folder (essential for d3.stratify)
+
+df['Folder'] = df.Doc.str.rsplit('\\',1).str[0]
+
+#Drop duplicates (they mess up stratify).  But first print them to make sure there isn't anything alarming.
+duplicateDFRow = df[df.duplicated(subset=['Doc'],keep='first')]
+print(duplicateDFRow)
+df = df.drop_duplicates(subset=['Doc'])
+
+
+#Get a list of files older than a certain period of time
+
+df['Date'] = df['LastWriteTime'].apply(lambda x: pd.to_datetime(x, errors='coerce'))
+
+df['Passed'] = df['Date'] > pd.Timestamp(2012,1,1)
+
+df['Year'] = df['Date'].dt.year
+
+df['YearRange'] = pd.cut(df['Year'], bins=[1995, 2000, 2005, 2010, 2015, 2020, 2025], include_lowest=True, labels=['1995-2000','2000-2005', '2005-2010', '2010-2015','2015-2020','2020-2025'])
+
+ 
+#fill in empty FileHash values with index values (so folders don't get shaded)
+df.loc[df['FileHash'].isnull(), 'FileHash'] = df.loc[df['FileHash'].isnull()].index
+
+#Get a column that indicates if a column has a duplicate:
+df['Dup'] = df.duplicated(subset=['FileHash'],keep=False)
+
+#D3 requires that date is in a string format for scatterplot 
+
+#merge the dataset on FileHash - this duplicates all the data
+df_merge = df.merge(df, on='FileHash')
+
+#create an adjacency matrix based on names
+results = pd.crosstab(df_merge.ShortNames_x, df_merge.ShortNames_y)
+
+#fills
+np.fill_diagonal(results.values, 0)
+
+#prints the result to the console, which allows you to copy-paste into the chord.html page
+print(repr(results.values))
+
+#to create a spreadsheet for easy identification of the source of duplicates, first identify the dups in the merged dataset and drop non-dups
+df_merge['Dup'] = df_merge.duplicated(subset=['FileHash'],keep=False)
+
+df_merge.drop(df_merge[df_merge['Dup'] == False ].index , inplace=True)
+#drops columns so it is only the ones you need = shortnames for filtering; doc for file detail
+df_merge = df_merge.loc[:,['FileHash','ShortNames_x','ShortNames_y','Doc_x','Doc_y']]
+#
+
+df_merge.to_csv("Text.csv")
